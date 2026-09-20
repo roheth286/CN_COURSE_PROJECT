@@ -1,1 +1,1 @@
-"""Feature engineering, temporal windowing, and network state sequence modules for NetForecaster."""
+"""Feature extraction, temporal windowing, and sequence construction modules for NetForecaster."""
