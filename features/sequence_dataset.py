@@ -54,6 +54,18 @@ class NetworkStateScaler:
         X_arr = np.asarray(X, dtype=np.float32)
         return (X_arr * self.scale_) + self.mean_
 
+    def save(self, filepath: str) -> None:
+        """Serialize scaler to disk using pickle."""
+        with open(filepath, "wb") as f:
+            pickle.dump(self, f)
+
+    @classmethod
+    def load(cls, filepath: str) -> "NetworkStateScaler":
+        """Load serialized scaler from disk."""
+        with open(filepath, "rb") as f:
+            scaler = pickle.load(f)
+        return scaler
+
 
 
 class NetworkSequenceDataset(Dataset):

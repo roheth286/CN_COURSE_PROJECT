@@ -29,7 +29,9 @@ import torch.nn as nn
 
 from model.network_world_model import NetworkWorldModel
 from features.sequence_dataset import NetworkStateScaler, STATE_FEATURE_NAMES, STATE_VECTOR_DIM
-from data.preprocess import INDEX_TO_CLASS, ATTACK_CLASSES
+from data.preprocess import CLASS_TO_INDEX, INDEX_TO_CLASS
+
+ATTACK_CLASSES = list(CLASS_TO_INDEX.keys())
 
 
 @dataclass
@@ -158,9 +160,9 @@ class RecursiveForecaster:
             checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
             model_kwargs = checkpoint.get("model_kwargs", {})
             self.model = NetworkWorldModel(
-                input_dim=model_kwargs.get("input_dim", STATE_VECTOR_DIM),
+                state_dim=model_kwargs.get("state_dim", STATE_VECTOR_DIM),
                 hidden_dim=model_kwargs.get("hidden_dim", 128),
-                num_layers=model_kwargs.get("num_layers", 2),
+                num_lstm_layers=model_kwargs.get("num_lstm_layers", 2),
                 num_classes=model_kwargs.get("num_classes", 8),
                 dropout=model_kwargs.get("dropout", 0.20),
             )
@@ -176,7 +178,12 @@ class RecursiveForecaster:
             scaler_path = str(scaler)
             if not os.path.exists(scaler_path):
                 raise FileNotFoundError(f"Scaler file not found at: {scaler_path}")
-            self.scaler = NetworkStateScaler.load(scaler_path)
+            if hasattr(NetworkStateScaler, "load"):
+                self.scaler = NetworkStateScaler.load(scaler_path)
+            else:
+                import pickle
+                with open(scaler_path, "rb") as f:
+                    self.scaler = pickle.load(f)
         else:
             self.scaler = scaler
 
@@ -226,9 +233,9 @@ class RecursiveForecaster:
             )
 
         num_samples, seq_len, state_dim = input_tensor.shape
-        if state_dim != self.model.input_dim:
+        if state_dim != self.model.state_dim:
             raise ValueError(
-                f"Input state_dim ({state_dim}) does not match model input_dim ({self.model.input_dim})"
+                f"Input state_dim ({state_dim}) does not match model state_dim ({self.model.state_dim})"
             )
 
         # Container for accumulated batch outputs
