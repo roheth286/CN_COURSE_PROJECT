@@ -171,7 +171,7 @@ class MultiTaskWorldModelLoss(nn.Module):
         self.lambda_state = lambda_state
         self.lambda_risk = lambda_risk
         self.lambda_cat = lambda_cat
-        
+        self.state_loss_fn = nn.SmoothL1Loss(beta=1.0)
         self.mse_loss = nn.MSELoss()
         self.bce_loss = nn.BCEWithLogitsLoss()
         self.ce_loss = nn.CrossEntropyLoss(weight=class_weights)
@@ -186,8 +186,9 @@ class MultiTaskWorldModelLoss(nn.Module):
         target_class: torch.Tensor
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """Compute the composite multi-task loss and return component metrics."""
-        # 1. State prediction loss (MSE)
-        state_loss = self.mse_loss(pred_state, target_state)
+        # 1. State prediction loss (Robust SmoothL1 / Huber for heavy attack bursts)
+        state_loss = self.state_loss_fn(pred_state, target_state)
+        state_mse = self.mse_loss(pred_state, target_state)
         
         # 2. Binary risk loss (BCEWithLogits)
         target_risk_expanded = target_risk.view(-1, 1).float()
@@ -206,6 +207,7 @@ class MultiTaskWorldModelLoss(nn.Module):
         loss_components = {
             "total_loss": float(total_loss.item()),
             "state_loss": float(state_loss.item()),
+            "state_mse": float(state_mse.item()),
             "risk_loss": float(risk_loss.item()),
             "cat_loss": float(cat_loss.item()),
         }
