@@ -13,6 +13,12 @@ This script tests:
 import os
 import sys
 import tempfile
+
+# Ensure project root is in sys.path
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 import torch
 import numpy as np
 from model.network_world_model import NetworkWorldModel, MultiTaskWorldModelLoss
