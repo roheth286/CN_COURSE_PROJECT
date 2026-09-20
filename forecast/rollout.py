@@ -73,6 +73,15 @@ class ForecastResult:
     horizon_steps: List[int]
     horizon_seconds: List[int]
 
+    @property
+    def composite_threat_probabilities(self) -> np.ndarray:
+        """
+        Threat probability computed from the multi-class category distribution:
+        P(Non-Benign) = 1.0 - P(BENIGN).
+        """
+        benign_prob = self.category_probabilities[..., 0]
+        return np.clip(1.0 - benign_prob, 0.0, 1.0)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert forecast result to serializable dictionary."""
         return {
@@ -82,6 +91,7 @@ class ForecastResult:
                 if self.predicted_states_unscaled is not None else None
             ),
             "risk_probabilities": self.risk_probabilities.tolist(),
+            "composite_threat_probabilities": self.composite_threat_probabilities.tolist(),
             "category_probabilities": self.category_probabilities.tolist(),
             "predicted_categories": self.predicted_categories.tolist(),
             "category_names": self.category_names,
