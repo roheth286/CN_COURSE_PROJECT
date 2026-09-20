@@ -1,17 +1,3 @@
-"""
-NetForecaster - Sequence Dataset Construction & Chronological Splitting (Stage 4)
-
-This module handles:
-1. Per-Session Chronological Splitting (70% Train, 15% Validation, 15% Test).
-2. Data leakage-free normalization using StandardScaler fitted strictly on the Training set.
-3. Sliding-window sequence construction:
-   - Input: m past consecutive state vectors [S_t, ..., S_{t+m-1}] in R^{m x D}.
-   - Target 1 (World Model): Next network state S_{t+m} in R^D.
-   - Target 2 (Binary Risk Head): Binary attack indicator for horizons k=1..K.
-   - Target 3 (Category Head): Multi-class attack indices for horizons k=1..K.
-4. PyTorch Dataset implementation for seamless DataLoader batching.
-"""
-
 import os
 import glob
 import json
@@ -25,12 +11,6 @@ from features.windowing import STATE_FEATURE_NAMES, STATE_VECTOR_DIM
 
 
 class NetworkStateScaler:
-    """
-    Pure NumPy feature scaler for standardizing network state vectors.
-    Computes mean and standard deviation strictly across training samples:
-        z = (x - mean) / std
-    Immune to external C/DLL runtime dependency issues and 100% portable.
-    """
     def __init__(self):
         self.mean_: Optional[np.ndarray] = None
         self.scale_: Optional[np.ndarray] = None
@@ -39,7 +19,6 @@ class NetworkStateScaler:
         X_arr = np.asarray(X, dtype=np.float32)
         self.mean_ = np.mean(X_arr, axis=0)
         std = np.std(X_arr, axis=0)
-        # Prevent division by zero for invariant features
         self.scale_ = np.where(std < 1e-7, 1.0, std)
         return self
 
@@ -55,29 +34,17 @@ class NetworkStateScaler:
         return (X_arr * self.scale_) + self.mean_
 
     def save(self, filepath: str) -> None:
-        """Serialize scaler to disk using pickle."""
         with open(filepath, "wb") as f:
             pickle.dump(self, f)
 
     @classmethod
     def load(cls, filepath: str) -> "NetworkStateScaler":
-        """Load serialized scaler from disk."""
         with open(filepath, "rb") as f:
             scaler = pickle.load(f)
         return scaler
 
 
-
 class NetworkSequenceDataset(Dataset):
-    """
-    PyTorch Dataset yielding sliding-window sequences for the LSTM World Model.
-    
-    Each sample contains:
-    - x: Historical sequence of m state vectors (Tensor of shape [m, D]).
-    - y_state: Target next state vector (Tensor of shape [D]).
-    - y_binary: Binary attack indicators over horizon K (Tensor of shape [K]).
-    - y_class: Attack class indices over horizon K (LongTensor of shape [K]).
-    """
     def __init__(
         self,
         x: np.ndarray,
@@ -105,24 +72,6 @@ def split_session_chronologically(
     val_ratio: float = 0.15,
     test_ratio: float = 0.15
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """
-    Partition a single session's ordered state vectors chronologically.
-    
-    Parameters:
-    -----------
-    session_df : pd.DataFrame
-        Chronologically sorted state vectors for a session.
-    train_ratio : float
-        Proportion for training (default 0.70).
-    val_ratio : float
-        Proportion for validation (default 0.15).
-    test_ratio : float
-        Proportion for testing (default 0.15).
-        
-    Returns:
-    --------
-    Tuple of (train_df, val_df, test_df)
-    """
     total_windows = len(session_df)
     
     n_train = int(total_windows * train_ratio)
@@ -141,32 +90,9 @@ def build_sliding_sequences_for_partition(
     forecast_horizon_k: int = 5,
     session_name: str = "unknown"
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[Dict]]:
-    """
-    Construct sliding-window sequences strictly within a single partition.
-    
-    Parameters:
-    -----------
-    partition_df : pd.DataFrame
-        Normalized state vectors for one split partition (Train, Val, or Test).
-    history_len_m : int
-        Number of past state vectors (m) in each input sequence.
-    forecast_horizon_k : int
-        Number of future windows (K) to predict ahead.
-    session_name : str
-        Name of the source session for metadata tracking.
-        
-    Returns:
-    --------
-    x : np.ndarray of shape [N, m, D]
-    y_state : np.ndarray of shape [N, D]
-    y_binary : np.ndarray of shape [N, K]
-    y_class : np.ndarray of shape [N, K]
-    timestamps : List of timestamp metadata dicts
-    """
     total_windows = len(partition_df)
     required_windows = history_len_m + forecast_horizon_k
     
-    # Check if partition has enough windows to form at least one sequence
     if total_windows < required_windows:
         empty_x = np.empty((0, history_len_m, STATE_VECTOR_DIM), dtype=np.float32)
         empty_y_state = np.empty((0, STATE_VECTOR_DIM), dtype=np.float32)
@@ -174,7 +100,6 @@ def build_sliding_sequences_for_partition(
         empty_y_class = np.empty((0, forecast_horizon_k), dtype=np.int64)
         return empty_x, empty_y_state, empty_y_binary, empty_y_class, []
         
-    # Extract feature matrix and label arrays
     feature_matrix = partition_df[STATE_FEATURE_NAMES].values.astype(np.float32)
     is_attack_array = partition_df["is_attack"].values.astype(np.float32)
     class_index_array = partition_df["class_index"].values.astype(np.int64)
@@ -191,13 +116,8 @@ def build_sliding_sequences_for_partition(
     num_sequences = total_windows - history_len_m - forecast_horizon_k + 1
     
     for i in range(num_sequences):
-        # Input history: m consecutive states [S_i ... S_{i+m-1}]
         x_seq = feature_matrix[i:i + history_len_m]
-        
-        # World model target: next state S_{i+m}
         y_state = feature_matrix[i + history_len_m]
-        
-        # Forecasting targets: future windows across horizon K [i+m ... i+m+K-1]
         y_binary = is_attack_array[i + history_len_m:i + history_len_m + forecast_horizon_k]
         y_class = class_index_array[i + history_len_m:i + history_len_m + forecast_horizon_k]
         
@@ -231,16 +151,6 @@ def build_full_sequence_dataset(
     val_ratio: float = 0.15,
     test_ratio: float = 0.15
 ) -> Dict:
-    """
-    Execute the complete Stage 4 sequence dataset creation pipeline.
-    
-    1. Loads all 8 session state vector files.
-    2. Performs per-session chronological 70/15/15 split.
-    3. Fits StandardScaler strictly on combined Train state features.
-    4. Normalizes Train, Val, and Test state features using the fitted scaler.
-    5. Builds sliding window sequences for Train, Val, and Test pools.
-    6. Exports data arrays, scaler, and metadata.
-    """
     os.makedirs(output_directory, exist_ok=True)
     
     parquet_files = sorted(glob.glob(os.path.join(state_vectors_directory, "*.parquet")))
@@ -258,7 +168,6 @@ def build_full_sequence_dataset(
     raw_test_dfs = []
     session_names = []
     
-    # Step 1: Per-Session Chronological Split
     for file_path in parquet_files:
         session_name = os.path.basename(file_path).split(".parquet")[0]
         session_names.append(session_name)
@@ -277,20 +186,17 @@ def build_full_sequence_dataset(
         
         print(f"  [Split] {session_name[:40]}: Total={len(df)}, Train={len(train_df)}, Val={len(val_df)}, Test={len(test_df)}")
         
-    # Step 2: Fit Scaler STRICTLY on Training data (Zero leakage!)
     print("\n[Normalization] Fitting StandardScaler on combined Training state vectors...")
     combined_train_features = pd.concat([df[STATE_FEATURE_NAMES] for df in raw_train_dfs], ignore_index=True)
     
     scaler = NetworkStateScaler()
     scaler.fit(combined_train_features.values)
     
-    # Save the fitted scaler
     scaler_path = os.path.join(output_directory, "scaler.pkl")
     with open(scaler_path, "wb") as f:
         pickle.dump(scaler, f)
     print(f"  [Saved] Scaler saved to: {scaler_path}")
     
-    # Step 3: Normalize partitions using the fitted scaler
     def normalize_split(df_list: List[pd.DataFrame]) -> List[pd.DataFrame]:
         normalized_dfs = []
         for df in df_list:
@@ -305,7 +211,6 @@ def build_full_sequence_dataset(
     norm_val_dfs = normalize_split(raw_val_dfs)
     norm_test_dfs = normalize_split(raw_test_dfs)
     
-    # Step 4: Build sliding sequences across sessions
     def build_pool_sequences(df_list: List[pd.DataFrame], split_name: str):
         all_x, all_y_state, all_y_binary, all_y_class = [], [], [], []
         all_timestamps = []
@@ -331,7 +236,6 @@ def build_full_sequence_dataset(
         
         print(f"  [{split_name} Pool] Built {len(concat_x):,} sequences. Input shape: {concat_x.shape}")
         
-        # Save as npz archive
         archive_path = os.path.join(output_directory, f"{split_name.lower()}_sequences.npz")
         np.savez_compressed(
             archive_path,
@@ -349,7 +253,6 @@ def build_full_sequence_dataset(
     val_x, val_y_s, val_y_b, val_y_c, val_ts = build_pool_sequences(norm_val_dfs, "Validation")
     test_x, test_y_s, test_y_b, test_y_c, test_ts = build_pool_sequences(norm_test_dfs, "Test")
     
-    # Step 5: Save dataset metadata
     metadata = {
         "history_len_m": history_len_m,
         "forecast_horizon_k": forecast_horizon_k,

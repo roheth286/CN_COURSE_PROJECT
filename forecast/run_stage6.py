@@ -1,20 +1,6 @@
-"""
-NetForecaster - Stage 6 Pipeline Execution Script
-
-This script:
-1. Loads the trained Network World Model checkpoint (model/checkpoints/best_world_model.pt).
-2. Loads the fitted NetworkStateScaler (Datasets/sequences/scaler.pkl).
-3. Loads the held-out test sequence partition (Datasets/sequences/test_sequences.npz).
-4. Executes multi-step closed-loop autoregressive rollouts across all test sequences for K=5 horizons (up to 150 seconds lookahead).
-5. Unscales predicted future states back to physical network telemetry units.
-6. Evaluates multi-horizon detection performance and quantifies error decay across time.
-7. Saves comprehensive predictions and evaluation metrics to Datasets/forecasts/.
-"""
-
 import os
 import sys
 
-# Ensure UTF-8 output encoding for console
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -22,7 +8,6 @@ import json
 import argparse
 import numpy as np
 
-# Ensure project root is in sys.path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
@@ -41,30 +26,24 @@ def run_stage6(
     batch_size: int = 64,
     device: str = "cpu"
 ) -> None:
-    """
-    Execute Stage 6 multi-step recursive forecasting on test set.
-    """
     print("=" * 80)
     print("STAGE 6: MULTI-STEP RECURSIVE FORECASTING EXECUTION")
     print("=" * 80)
 
-    # Resolve absolute paths
     full_checkpoint_path = os.path.join(PROJECT_ROOT, checkpoint_path)
     full_scaler_path = os.path.join(PROJECT_ROOT, scaler_path)
     full_test_path = os.path.join(PROJECT_ROOT, test_sequences_path)
     full_output_dir = os.path.join(PROJECT_ROOT, output_dir)
     os.makedirs(full_output_dir, exist_ok=True)
 
-    # 1. Verification of prerequisites
     for path_name, p in [
         ("Model Checkpoint", full_checkpoint_path),
         ("Scaler", full_scaler_path),
         ("Test Sequences", full_test_path)
     ]:
         if not os.path.exists(p):
-            raise FileNotFoundError(f"{path_name} not found at: {p}. Please ensure earlier stages have run.")
+            raise FileNotFoundError(f"{path_name} not found at: {p}.")
 
-    # 2. Load test sequences
     print(f"\n[1/5] Loading test sequences from {test_sequences_path}...")
     test_data = np.load(full_test_path)
     x_test = test_data["x"]
@@ -77,7 +56,6 @@ def run_stage6(
     print(f"      Input history shape     : {x_test.shape} ({history_len * 30}s history)")
     print(f"      Target horizon (K)      : {K} steps ({K * 30}s = {K * 0.5:.1f} minutes lookahead)")
 
-    # 3. Initialize RecursiveForecaster
     print(f"\n[2/5] Initializing RecursiveForecaster with trained checkpoint...")
     forecaster = RecursiveForecaster(
         model=full_checkpoint_path,
@@ -88,7 +66,6 @@ def run_stage6(
     print(f"      Model loaded on device  : {device}")
     print(f"      Scaler loaded           : {forecaster.scaler is not None}")
 
-    # 4. Perform Autoregressive Rollout
     print(f"\n[3/5] Executing multi-step closed-loop autoregressive rollouts (K={K})...")
     forecast_result = forecaster.rollout(
         sequences=x_test,
@@ -101,7 +78,6 @@ def run_stage6(
     print(f"      Risk probabilities shape: {forecast_result.risk_probabilities.shape}")
     print(f"      Category logits shape   : {forecast_result.category_probabilities.shape}")
 
-    # 5. Evaluate Multi-Horizon Metrics & Error Decay
     print(f"\n[4/5] Evaluating multi-horizon detection performance across horizons...")
     metrics = evaluate_rollout_metrics(
         forecast_result=forecast_result,
@@ -125,7 +101,6 @@ def run_stage6(
 
     print("=" * 90)
 
-    # 6. Sample Attack Trajectory Showcase
     print(f"\n[5/5] Sample Early Warning Attack Forecast Inspection:")
     attack_indices = np.where(y_risk_test[:, 0] == 1)[0]
     if len(attack_indices) > 0:
@@ -137,10 +112,8 @@ def run_stage6(
         print(f"      Predicted Threat Risks: {[round(float(r), 4) for r in sample['risk_probabilities']]}")
         print(f"      Predicted Categories  : {sample['category_names']}")
         
-        # Display key unscaled feature forecasts
         if sample['predicted_states_unscaled'] is not None:
             unscaled_k1 = sample['predicted_states_unscaled'][0]
-            # Key features: flow_count (idx 0), total_packets (idx 3), syn_flag_count (idx 13)
             flow_cnt_idx = STATE_FEATURE_NAMES.index("flow_count") if "flow_count" in STATE_FEATURE_NAMES else 0
             pkt_cnt_idx = STATE_FEATURE_NAMES.index("total_packets") if "total_packets" in STATE_FEATURE_NAMES else 3
             print(f"      Physical Telemetry Forecast (k=1):")
@@ -149,7 +122,6 @@ def run_stage6(
     else:
         print("      No attack sequences found in test partition.")
 
-    # 7. Save outputs
     results_npz_path = os.path.join(full_output_dir, "test_rollout_predictions.npz")
     np.savez_compressed(
         results_npz_path,

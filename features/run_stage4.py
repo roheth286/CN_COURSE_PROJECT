@@ -1,18 +1,13 @@
-"""
-Stage 4 Execution Pipeline - Sequence Dataset Construction
-
-This script loads the 30-second state vectors from Datasets/state_vectors/,
-performs Per-Session Chronological Splitting (70% Train, 15% Val, 15% Test),
-fits a leak-free NetworkStateScaler on the training set, builds sliding-window
-sequences (m=10 past windows -> next state S_{t+1} and K=5 future attack targets),
-and exports the dataset archives and scaler to Datasets/sequences/.
-"""
-
 import os
 import sys
 import argparse
 import pandas as pd
 import numpy as np
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from features.sequence_dataset import build_full_sequence_dataset
 from data.preprocess import INDEX_TO_CLASS
 
@@ -26,7 +21,6 @@ def execute_stage4(
     val_ratio: float = 0.15,
     test_ratio: float = 0.15
 ) -> None:
-    """Run the complete Stage 4 sequence dataset creation and print verification table."""
     result = build_full_sequence_dataset(
         state_vectors_directory=state_vectors_dir,
         output_directory=output_dir,
@@ -83,7 +77,6 @@ def execute_stage4(
     print(summary_df.to_string(index=False))
     print("-" * 80)
     
-    # Print class distribution in each split for horizon k=1
     print("\nClass Distribution Across Splits (Immediate Next Window t+1):")
     class_distribution = []
     for c_idx in range(8):
@@ -99,24 +92,23 @@ def execute_stage4(
             "Test Count": n_test,
             "Total Count": n_train + n_val + n_test
         })
-    class_df = pd.DataFrame(class_distribution)
-    print(class_df.to_string(index=False))
+    print(pd.DataFrame(class_distribution).to_string(index=False))
     print("=" * 80 + "\n")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Stage 4 Sequence Dataset Construction")
-    parser.add_argument("--state-vectors-dir", type=str, default="Datasets/state_vectors")
+    parser.add_argument("--state-dir", type=str, default="Datasets/state_vectors")
     parser.add_argument("--output-dir", type=str, default="Datasets/sequences")
-    parser.add_argument("--history-m", type=int, default=10, help="Number of past windows (m)")
-    parser.add_argument("--horizon-k", type=int, default=5, help="Number of future forecast windows (K)")
+    parser.add_argument("--history-m", type=int, default=10)
+    parser.add_argument("--horizon-k", type=int, default=5)
     parser.add_argument("--train-ratio", type=float, default=0.70)
     parser.add_argument("--val-ratio", type=float, default=0.15)
     parser.add_argument("--test-ratio", type=float, default=0.15)
     args = parser.parse_args()
     
     execute_stage4(
-        state_vectors_dir=args.state_vectors_dir,
+        state_vectors_dir=args.state_dir,
         output_dir=args.output_dir,
         history_len_m=args.history_m,
         forecast_horizon_k=args.horizon_k,

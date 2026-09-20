@@ -1,1 +1,1 @@
-"""PyTorch LSTM World Model and training pipeline for NetForecaster."""
+from model.network_world_model import NetworkWorldModel, MultiTaskWorldModelLoss

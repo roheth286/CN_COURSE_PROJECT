@@ -1,11 +1,3 @@
-"""
-NetForecaster - Forecast Package (Stage 6)
-
-This package implements the multi-step recursive forecasting engine.
-It leverages the trained NetworkWorldModel to perform autoregressive
-state rollouts, multi-horizon threat risk scoring, and attack category prediction.
-"""
-
 from forecast.rollout import (
     ForecastResult,
     RecursiveForecaster,

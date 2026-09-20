@@ -1,17 +1,14 @@
-"""
-Stage 2 Execution Pipeline - Batch Preprocessing
-
-This script processes all raw CIC-IDS2017 session files from Datasets/TrafficLabelling/,
-cleans and normalizes them, and saves the cleaned datasets as high-performance
-Parquet files in data/processed/.
-"""
-
 import os
 import sys
 import glob
 import argparse
 import pandas as pd
 from typing import List, Dict
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from data.preprocess import load_and_preprocess_single_file
 
 
@@ -20,18 +17,6 @@ def process_all_sessions(
     output_directory: str = "Datasets/processed",
     max_files: int = 0
 ) -> List[Dict]:
-    """
-    Load, clean, and export all network session CSVs in chronological order.
-    
-    Parameters:
-    -----------
-    input_directory : str
-        Directory containing the raw CIC-IDS2017 CSV files.
-    output_directory : str
-        Directory where preprocessed Parquet files will be saved.
-    max_files : int
-        If > 0, process only the first N files (useful for quick testing).
-    """
     os.makedirs(output_directory, exist_ok=True)
     
     csv_pattern = os.path.join(input_directory, "*.csv")
@@ -57,14 +42,11 @@ def process_all_sessions(
         
         print(f"\n[{file_index}/{len(csv_files)}] Processing: {file_name}")
         
-        # Execute Stage 2 preprocessing pipeline
         cleaned_df = load_and_preprocess_single_file(file_path)
         
-        # Save as Parquet for speed, compression, and exact type preservation
         print(f"  [Saving] Exporting to: {output_file_path}")
         cleaned_df.to_parquet(output_file_path, index=False, engine="pyarrow")
         
-        # Collect summary statistics
         attack_counts = dict(cleaned_df["Attack_Category"].value_counts())
         total_attacks = sum(count for cat, count in attack_counts.items() if cat != "BENIGN")
         
@@ -77,7 +59,6 @@ def process_all_sessions(
             "Attack_Types": ", ".join(f"{cat}({cnt:,})" for cat, cnt in attack_counts.items() if cat != "BENIGN") or "None (Benign)"
         })
         
-    # Print final summary table
     print("\n" + "=" * 80)
     print("STAGE 2 PREPROCESSING SUMMARY TABLE")
     print("=" * 80)

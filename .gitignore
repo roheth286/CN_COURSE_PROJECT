@@ -1,14 +1,11 @@
-# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Virtual environments
 venv/
 .venv/
 env/
 
-# Datasets and large data files (GitHub 100MB limit)
 Datasets/
 data/raw/
 data/processed/
@@ -20,18 +17,15 @@ data/processed/
 *.tar.gz
 *.parquet
 
-# Model checkpoints and weights
 model/checkpoints/
 *.pt
 *.pth
 *.onnx
 *.pkl
 
-# Logs and outputs
 logs/
 *.log
 
-# IDE & OS
 .vscode/
 .idea/
 .DS_Store

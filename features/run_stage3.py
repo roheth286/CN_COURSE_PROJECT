@@ -1,17 +1,14 @@
-"""
-Stage 3 Execution Pipeline - Batch Temporal Windowing
-
-This script processes all cleaned Parquet files from Datasets/processed/,
-aggregates flows into macroscopic Network State Vectors (S_t), and exports
-them as structured temporal time series to Datasets/state_vectors/.
-"""
-
 import os
 import sys
 import glob
 import argparse
 import pandas as pd
 from typing import List, Dict
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from features.windowing import process_parquet_session_to_state_vectors, STATE_VECTOR_DIM
 
 
@@ -21,20 +18,6 @@ def batch_window_all_sessions(
     window_seconds: int = 30,
     max_files: int = 0
 ) -> List[Dict]:
-    """
-    Process all session Parquet files into temporal network state vectors.
-    
-    Parameters:
-    -----------
-    input_directory : str
-        Directory containing the preprocessed session Parquet files.
-    output_directory : str
-        Directory where generated state vector Parquet files will be stored.
-    window_seconds : int
-        Duration of each aggregation window in seconds (default: 30s).
-    max_files : int
-        If > 0, process only the first N files.
-    """
     os.makedirs(output_directory, exist_ok=True)
     
     parquet_pattern = os.path.join(input_directory, "*.parquet")
@@ -64,7 +47,6 @@ def batch_window_all_sessions(
         
         print(f"\n[{file_index}/{len(parquet_files)}] Windowing session: {file_name}")
         
-        # Execute Stage 3 temporal windowing
         state_df = process_parquet_session_to_state_vectors(
             parquet_path=file_path,
             output_path=output_file_path,
@@ -75,7 +57,6 @@ def batch_window_all_sessions(
         attack_windows = int((state_df["is_attack"] == 1).sum()) if total_windows > 0 else 0
         benign_windows = total_windows - attack_windows
         
-        # Categorical breakdown
         cat_counts = dict(state_df["attack_category"].value_counts()) if total_windows > 0 else {}
         attack_types_str = ", ".join(
             f"{cat}({cnt})" for cat, cnt in cat_counts.items() if cat != "BENIGN"
@@ -89,7 +70,6 @@ def batch_window_all_sessions(
             "Attack_Types": attack_types_str
         })
         
-    # Print final summary table
     print("\n" + "=" * 80)
     print(f"STAGE 3 TEMPORAL WINDOWING SUMMARY (Window Size = {window_seconds}s)")
     print("=" * 80)
@@ -102,15 +82,15 @@ def batch_window_all_sessions(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Stage 3 Temporal Windowing for NetForecaster")
-    parser.add_argument("--input-dir", type=str, default="Datasets/processed", help="Path to input Parquet directory")
-    parser.add_argument("--output-dir", type=str, default="Datasets/state_vectors", help="Path to output state vectors directory")
-    parser.add_argument("--window-size", type=int, default=30, help="Window duration in seconds (default: 30)")
-    parser.add_argument("--max-files", type=int, default=0, help="Maximum number of files to process (0 for all)")
+    parser.add_argument("--input-dir", type=str, default="Datasets/processed")
+    parser.add_argument("--output-dir", type=str, default="Datasets/state_vectors")
+    parser.add_argument("--window-sec", type=int, default=30)
+    parser.add_argument("--max-files", type=int, default=0)
     args = parser.parse_args()
     
     batch_window_all_sessions(
         input_directory=args.input_dir,
         output_directory=args.output_dir,
-        window_seconds=args.window_size,
+        window_seconds=args.window_sec,
         max_files=args.max_files
     )

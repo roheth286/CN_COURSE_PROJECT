@@ -1,20 +1,6 @@
-"""
-NetForecaster - World Model Training Pipeline (Stage 5)
-
-This script:
-1. Loads the sliding sequence datasets from Datasets/sequences/.
-2. Computes class-balanced inverse frequency weights for multi-class supervision.
-3. Instantiates the NetworkWorldModel and MultiTaskWorldModelLoss.
-4. Trains the model using AdamW, gradient clipping, and ReduceLROnPlateau scheduling.
-5. Evaluates on validation data every epoch (MSE, Binary F1, Category Accuracy).
-6. Automatically saves the best model checkpoint to model/checkpoints/best_world_model.pt.
-7. Exports full epoch history to model/checkpoints/training_history.json.
-"""
-
 import os
 import sys
 
-# Ensure project root is in sys.path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
@@ -31,10 +17,6 @@ from data.preprocess import INDEX_TO_CLASS
 
 
 def compute_class_weights(train_classes: np.ndarray, num_classes: int = 8, max_weight: float = 15.0) -> torch.Tensor:
-    """
-    Compute inverse-frequency class weights to balance the 8-class CrossEntropy loss.
-    Minority attacks receive higher weight to prevent the dominant BENIGN class from overwhelming gradients.
-    """
     unique, counts = np.unique(train_classes, return_counts=True)
     class_count_dict = dict(zip(unique, counts))
     
@@ -51,7 +33,6 @@ def compute_class_weights(train_classes: np.ndarray, num_classes: int = 8, max_w
         weights.append(weight)
         
     weights_tensor = torch.tensor(weights, dtype=torch.float32)
-    # Normalize so mean weight is 1.0
     weights_tensor = weights_tensor / weights_tensor.mean()
     return weights_tensor
 
@@ -62,7 +43,6 @@ def evaluate_model(
     criterion: MultiTaskWorldModelLoss,
     device: torch.device
 ) -> Dict[str, float]:
-    """Evaluate model performance across all 3 multi-task heads on a given DataLoader."""
     model.eval()
     
     total_loss = 0.0
@@ -98,12 +78,10 @@ def evaluate_model(
             risk_loss_total += comps["risk_loss"] * len(x)
             cat_loss_total += comps["cat_loss"] * len(x)
             
-            # Risk metrics (threshold = 0.5)
             probs = torch.sigmoid(pred_risk_logits).squeeze(-1).cpu().numpy()
             all_pred_risks.extend(probs)
             all_true_risks.extend(target_risk.cpu().numpy())
             
-            # Category metrics
             preds = torch.argmax(pred_cat_logits, dim=-1).cpu().numpy()
             all_pred_classes.extend(preds)
             all_true_classes.extend(target_class.cpu().numpy())
@@ -114,7 +92,6 @@ def evaluate_model(
     avg_risk_loss = risk_loss_total / num_samples
     avg_cat_loss = cat_loss_total / num_samples
     
-    # Binary Classification Metrics
     all_pred_binary = (np.array(all_pred_risks) >= 0.5).astype(int)
     all_true_binary = np.array(all_true_risks).astype(int)
     
@@ -128,7 +105,6 @@ def evaluate_model(
     recall = tp / max(tp + fn, 1)
     f1 = (2 * precision * recall) / max(precision + recall, 1e-7)
     
-    # Multi-Class Accuracy
     correct_classes = (np.array(all_pred_classes) == np.array(all_true_classes)).sum()
     cat_accuracy = correct_classes / max(num_samples, 1)
     
@@ -156,12 +132,10 @@ def train_network_world_model(
     dropout: float = 0.2,
     patience: int = 7
 ) -> Dict:
-    """Execute complete training loop for the Network World Model."""
     os.makedirs(checkpoint_dir, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[Device] Using compute device: {device}")
     
-    # Load dataset archives
     train_npz = np.load(os.path.join(data_dir, "train_sequences.npz"))
     val_npz = np.load(os.path.join(data_dir, "validation_sequences.npz"))
     
@@ -181,8 +155,8 @@ def train_network_world_model(
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     
-    state_dim = train_npz["x"].shape[2]  # 36
-    seq_len = train_npz["x"].shape[1]    # 10
+    state_dim = train_npz["x"].shape[2]
+    seq_len = train_npz["x"].shape[1]
     num_classes = 8
     
     print("=" * 80)
@@ -191,7 +165,6 @@ def train_network_world_model(
     print(f"Architecture: Input({seq_len}, {state_dim}) -> LSTM({hidden_dim}, layers={num_lstm_layers}) -> 3 Heads")
     print("=" * 80)
     
-    # Instantiate model
     model = NetworkWorldModel(
         state_dim=state_dim,
         hidden_dim=hidden_dim,
@@ -200,11 +173,9 @@ def train_network_world_model(
         dropout=dropout
     ).to(device)
     
-    # Compute class weights for loss balancing
     train_classes = train_npz["y_class"][:, 0]
     class_weights = compute_class_weights(train_classes, num_classes=num_classes).to(device)
     
-    # Loss, Optimizer, Scheduler
     criterion = MultiTaskWorldModelLoss(
         lambda_state=1.0,
         lambda_risk=1.5,
@@ -247,7 +218,6 @@ def train_network_world_model(
             optimizer.zero_grad()
             
             pred_state, pred_risk_logits, pred_cat_logits = model(x)
-            
             loss, comps = criterion(
                 pred_state=pred_state,
                 pred_risk_logits=pred_risk_logits,
@@ -267,13 +237,10 @@ def train_network_world_model(
             train_cat_loss_accum += comps["cat_loss"] * len(x)
             
         avg_train_loss = train_loss_accum / len(train_dataset)
-        
-        # Evaluate on validation split
         val_metrics = evaluate_model(model, val_loader, criterion, device)
         scheduler.step(val_metrics["val_loss"])
         current_lr = optimizer.param_groups[0]["lr"]
         
-        # Record history
         history["epoch"].append(epoch)
         history["train_loss"].append(avg_train_loss)
         history["val_loss"].append(val_metrics["val_loss"])
@@ -299,7 +266,6 @@ def train_network_world_model(
         if is_best:
             best_val_loss = val_metrics["val_loss"]
             epochs_no_improve = 0
-            # Save checkpoint
             torch.save({
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
@@ -326,7 +292,6 @@ def train_network_world_model(
     print(f"Best Checkpoint Saved: {best_checkpoint_path}")
     print("=" * 80)
     
-    # Save training history JSON
     history_path = os.path.join(checkpoint_dir, "training_history.json")
     with open(history_path, "w") as f:
         json.dump(history, f, indent=4)
