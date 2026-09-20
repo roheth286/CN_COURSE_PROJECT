@@ -17,7 +17,7 @@ from data.preprocess import load_and_preprocess_single_file
 
 def process_all_sessions(
     input_directory: str = "Datasets/TrafficLabelling",
-    output_directory: str = "data/processed",
+    output_directory: str = "Datasets/processed",
     max_files: int = 0
 ) -> List[Dict]:
     """
@@ -91,7 +91,7 @@ def process_all_sessions(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Stage 2 Preprocessing for NetForecaster")
     parser.add_argument("--input-dir", type=str, default="Datasets/TrafficLabelling", help="Path to raw CSV directory")
-    parser.add_argument("--output-dir", type=str, default="data/processed", help="Path to output Parquet directory")
+    parser.add_argument("--output-dir", type=str, default="Datasets/processed", help="Path to output Parquet directory")
     parser.add_argument("--max-files", type=int, default=0, help="Maximum number of files to process (0 for all)")
     args = parser.parse_args()
     
