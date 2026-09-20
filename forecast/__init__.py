@@ -1,20 +1,19 @@
 """
-NetForecaster - Multi-Step Forecasting Package (Stage 6)
+NetForecaster - Forecast Package (Stage 6)
 
-This package implements autoregressive rollout and multi-step recursive state forecasting
-for the Network World Model.
+This package implements the multi-step recursive forecasting engine.
+It leverages the trained NetworkWorldModel to perform autoregressive
+state rollouts, multi-horizon threat risk scoring, and attack category prediction.
 """
 
 from forecast.rollout import (
-    RolloutResult,
-    autoregressive_rollout,
-    evaluate_rollout_horizons,
-    unscale_state_trajectories,
+    ForecastResult,
+    RecursiveForecaster,
+    evaluate_rollout_metrics,
 )
 
 __all__ = [
-    "RolloutResult",
-    "autoregressive_rollout",
-    "evaluate_rollout_horizons",
-    "unscale_state_trajectories",
+    "ForecastResult",
+    "RecursiveForecaster",
+    "evaluate_rollout_metrics",
 ]
