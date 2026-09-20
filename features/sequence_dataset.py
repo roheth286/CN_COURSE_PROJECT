@@ -21,8 +21,39 @@ import pandas as pd
 from typing import Dict, List, Tuple, Optional
 import torch
 from torch.utils.data import Dataset
-from sklearn.preprocessing import StandardScaler
 from features.windowing import STATE_FEATURE_NAMES, STATE_VECTOR_DIM
+
+
+class NetworkStateScaler:
+    """
+    Pure NumPy feature scaler for standardizing network state vectors.
+    Computes mean and standard deviation strictly across training samples:
+        z = (x - mean) / std
+    Immune to external C/DLL runtime dependency issues and 100% portable.
+    """
+    def __init__(self):
+        self.mean_: Optional[np.ndarray] = None
+        self.scale_: Optional[np.ndarray] = None
+
+    def fit(self, X: np.ndarray) -> "NetworkStateScaler":
+        X_arr = np.asarray(X, dtype=np.float32)
+        self.mean_ = np.mean(X_arr, axis=0)
+        std = np.std(X_arr, axis=0)
+        # Prevent division by zero for invariant features
+        self.scale_ = np.where(std < 1e-7, 1.0, std)
+        return self
+
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        X_arr = np.asarray(X, dtype=np.float32)
+        return (X_arr - self.mean_) / self.scale_
+
+    def fit_transform(self, X: np.ndarray) -> np.ndarray:
+        return self.fit(X).transform(X)
+
+    def inverse_transform(self, X: np.ndarray) -> np.ndarray:
+        X_arr = np.asarray(X, dtype=np.float32)
+        return (X_arr * self.scale_) + self.mean_
+
 
 
 class NetworkSequenceDataset(Dataset):
@@ -238,11 +269,8 @@ def build_full_sequence_dataset(
     print("\n[Normalization] Fitting StandardScaler on combined Training state vectors...")
     combined_train_features = pd.concat([df[STATE_FEATURE_NAMES] for df in raw_train_dfs], ignore_index=True)
     
-    scaler = StandardScaler()
+    scaler = NetworkStateScaler()
     scaler.fit(combined_train_features.values)
-    
-    # Handle zero-variance columns if any
-    scaler.scale_ = np.where(scaler.scale_ < 1e-7, 1.0, scaler.scale_)
     
     # Save the fitted scaler
     scaler_path = os.path.join(output_directory, "scaler.pkl")
