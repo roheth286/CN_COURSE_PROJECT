@@ -1,31 +1,9 @@
-"""
-NetForecaster - Early Warning Lead Time Engine (Stage 7)
-
-This module implements the evaluation of the primary innovation metric of NetForecaster:
-Advance Warning Lead Time (Delta T).
-
-Traditional IDS (reactive):
-- Lead time is 0s (or negative): alerts are only generated AFTER or DURING an attack.
-
-NetForecaster (proactive temporal world model):
-- Monitors incoming network telemetry in sliding m-window sequences.
-- Recursively forecasts K steps into the future (Delta t = 30s per window).
-- If the model forecasts an attack at step t + k before the attack actually arrives,
-  the system raises an alert at time t.
-- The Lead Time is:
-    Delta T = (T_actual - T_alert) * Delta t
-  Where T_actual is the start window of the attack episode and T_alert is the window
-  index where the proactive warning was first triggered.
-  If an alert is triggered 2 windows ahead, Delta T = 2 * 30s = 60s of advance warning.
-"""
-
 import os
 import sys
 import glob
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple, Any, Union
 
-# Ensure project root is in sys.path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
@@ -45,9 +23,6 @@ from data.preprocess import INDEX_TO_CLASS, CLASS_TO_INDEX
 
 @dataclass
 class AttackEpisode:
-    """
-    Represents a contiguous interval of attack windows in network telemetry.
-    """
     episode_id: int
     session_name: str
     attack_category: str
@@ -68,9 +43,6 @@ class AttackEpisode:
 
 @dataclass
 class EpisodeLeadTimeResult:
-    """
-    Stores lead time metrics for a specific attack episode.
-    """
     episode_id: int
     session_name: str
     attack_category: str
@@ -83,7 +55,7 @@ class EpisodeLeadTimeResult:
     forecast_step_k: Optional[int]
     lead_time_seconds: float
     lead_time_windows: int
-    detection_type: str  # "Proactive Early Warning", "Onset Detection", "Delayed Detection", "Missed"
+    detection_type: str
     threat_confidence: float
     predicted_category: str
     category_match: bool
@@ -91,9 +63,6 @@ class EpisodeLeadTimeResult:
 
 @dataclass
 class LeadTimeSummary:
-    """
-    Aggregated summary statistics across all evaluated attack episodes.
-    """
     total_episodes: int
     detected_episodes: int
     early_warning_episodes: int
@@ -112,7 +81,6 @@ class LeadTimeSummary:
     episode_details: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize summary to clean dictionary."""
         return {
             "total_episodes": self.total_episodes,
             "detected_episodes": self.detected_episodes,
@@ -138,22 +106,6 @@ def identify_attack_episodes(
     session_name: str = "session",
     min_episode_len: int = 1
 ) -> List[AttackEpisode]:
-    """
-    Identify contiguous intervals of attack windows in an ordered state vector DataFrame.
-    
-    Parameters:
-    -----------
-    dataframe : pd.DataFrame
-        Temporal state vectors containing 'is_attack', 'attack_category', and 'class_index'.
-    session_name : str
-        Source session identifier.
-    min_episode_len : int
-        Minimum consecutive attack windows to constitute an episode (default: 1).
-        
-    Returns:
-    --------
-    List of AttackEpisode objects.
-    """
     if len(dataframe) == 0 or "is_attack" not in dataframe.columns:
         return []
 
@@ -191,14 +143,12 @@ def identify_attack_episodes(
         cat = categories[i]
 
         if is_att and not in_episode:
-            # Start new episode
             in_episode = True
             ep_start = i
             ep_cat = cat
             ep_idx = int(class_indices[i])
         elif in_episode:
             if not is_att or (cat != ep_cat and cat != "BENIGN"):
-                # Episode terminated (either returned to benign or changed attack class)
                 ep_end = i - 1
                 if (ep_end - ep_start + 1) >= min_episode_len:
                     episodes.append(AttackEpisode(
@@ -214,14 +164,12 @@ def identify_attack_episodes(
                     current_episode_id += 1
 
                 if is_att:
-                    # Immediately began a new distinct attack class
                     ep_start = i
                     ep_cat = cat
                     ep_idx = int(class_indices[i])
                 else:
                     in_episode = False
 
-    # Check if final episode was open at end of dataframe
     if in_episode:
         ep_end = len(dataframe) - 1
         if (ep_end - ep_start + 1) >= min_episode_len:
@@ -240,10 +188,6 @@ def identify_attack_episodes(
 
 
 class LeadTimeEngine:
-    """
-    Evaluates early warning lead time across temporal network traffic streams.
-    """
-
     def __init__(
         self,
         forecaster: RecursiveForecaster,
@@ -251,21 +195,6 @@ class LeadTimeEngine:
         use_composite_threat: bool = True,
         window_seconds: int = 30
     ) -> None:
-        """
-        Initialize the lead time engine.
-        
-        Parameters:
-        -----------
-        forecaster : RecursiveForecaster
-            Trained forecasting engine capable of autoregressive rollout.
-        threat_threshold : float
-            Probability threshold to declare an active threat alert (default: 0.50).
-        use_composite_threat : bool
-            If True, evaluates threat alert as max(P_risk, 1.0 - P_benign).
-            If False, strictly uses P_risk from the binary risk head.
-        window_seconds : int
-            Duration of each temporal state window in seconds (default: 30s).
-        """
         self.forecaster = forecaster
         self.threat_threshold = threat_threshold
         self.use_composite_threat = use_composite_threat
@@ -278,35 +207,12 @@ class LeadTimeEngine:
         history_len_m: int = 10,
         K: int = 5
     ) -> Tuple[List[EpisodeLeadTimeResult], int, int]:
-        """
-        Simulate real-time streaming surveillance over a continuous session DataFrame.
-        
-        Parameters:
-        -----------
-        session_df : pd.DataFrame
-            Ordered DataFrame containing features, is_attack, attack_category, and timestamps.
-        session_name : str
-            Session identifier.
-        history_len_m : int
-            Number of historical state windows required for model input.
-        K : int
-            Forecast lookahead horizon in steps.
-            
-        Returns:
-        --------
-        Tuple of:
-        - List of EpisodeLeadTimeResult for each attack episode in the session.
-        - Number of false alarms raised during benign periods.
-        - Total number of benign monitoring windows evaluated.
-        """
         total_windows = len(session_df)
         if total_windows < history_len_m + 1:
             return [], 0, 0
 
-        # Identify ground truth attack episodes
         episodes = identify_attack_episodes(session_df, session_name=session_name)
 
-        # Extract normalized feature matrix
         raw_features = session_df[STATE_FEATURE_NAMES].values
         if self.forecaster.scaler is not None:
             norm_features = self.forecaster.scaler.transform(raw_features)
@@ -320,18 +226,14 @@ class LeadTimeEngine:
             else [f"window_{i}" for i in range(total_windows)]
         )
 
-        # Build all sliding sequences for fast vectorized batch rollout
-        # Sequences are formed at monitoring time steps t in [m - 1 ... total_windows - 2]
         monitoring_steps = list(range(history_len_m - 1, total_windows - 1))
         batch_sequences = []
         for t in monitoring_steps:
-            # History is [t - m + 1 ... t] (length m)
             window_slice = norm_features[t - history_len_m + 1:t + 1]
             batch_sequences.append(window_slice)
 
-        batch_tensor = np.array(batch_sequences, dtype=np.float32)  # Shape: [N_surveillance, m, D]
+        batch_tensor = np.array(batch_sequences, dtype=np.float32)
 
-        # Execute rollout across entire surveillance timeline
         forecast_res: ForecastResult = self.forecaster.rollout(
             sequences=batch_tensor,
             K=K,
@@ -339,19 +241,15 @@ class LeadTimeEngine:
             batch_size=128
         )
 
-        # Extract forecasted threat probabilities
-        # Shape: [N_surveillance, K]
         if self.use_composite_threat:
-            # Composite threat: max of binary risk and (1.0 - P_benign)
             p_risk = forecast_res.risk_probabilities
             p_comp = forecast_res.composite_threat_probabilities
             threat_probs = np.maximum(p_risk, p_comp)
         else:
             threat_probs = forecast_res.risk_probabilities
 
-        pred_categories = forecast_res.predicted_categories  # [N_surveillance, K]
+        pred_categories = forecast_res.predicted_categories
 
-        # Tracking alerts and matching to episodes
         episode_results: Dict[int, EpisodeLeadTimeResult] = {}
         for ep in episodes:
             episode_results[ep.episode_id] = EpisodeLeadTimeResult(
@@ -376,23 +274,19 @@ class LeadTimeEngine:
         false_alarms = 0
         benign_monitoring_windows = 0
 
-        # Step-by-step surveillance scan
         for idx, t in enumerate(monitoring_steps):
             is_current_benign = (is_attack_arr[t] == 0)
             if is_current_benign:
                 benign_monitoring_windows += 1
 
-            # Check if an alert is triggered across horizons k in 1..K
-            step_threat_probs = threat_probs[idx]      # Shape: [K]
-            step_pred_cats = pred_categories[idx]      # Shape: [K]
+            step_threat_probs = threat_probs[idx]
+            step_pred_cats = pred_categories[idx]
 
             alert_k_indices = np.where(step_threat_probs >= self.threat_threshold)[0]
             if len(alert_k_indices) == 0:
-                # Also check if predicted category is non-benign
                 alert_k_indices = np.where(step_pred_cats != 0)[0]
 
             if len(alert_k_indices) > 0:
-                # Earliest lookahead horizon that triggered alarm
                 earliest_k_idx = int(alert_k_indices[0])
                 k_step = earliest_k_idx + 1
                 target_window = t + k_step
@@ -400,11 +294,8 @@ class LeadTimeEngine:
                 pred_cat_idx = int(step_pred_cats[earliest_k_idx])
                 pred_cat_name = INDEX_TO_CLASS.get(pred_cat_idx, "Unknown")
 
-                # Check if this alert corresponds to an actual attack episode
                 matched_episode: Optional[AttackEpisode] = None
                 for ep in episodes:
-                    # Alert matches if target window lands within episode
-                    # OR if the monitoring step is within [ep.start - K ... ep.end]
                     if (ep.start_window_idx - K <= t <= ep.end_window_idx) and (
                         ep.start_window_idx <= target_window <= ep.end_window_idx + 2
                     ):
@@ -414,7 +305,6 @@ class LeadTimeEngine:
                 if matched_episode is not None:
                     res = episode_results[matched_episode.episode_id]
                     if not res.detected:
-                        # Record the FIRST alert for this episode
                         lead_windows = matched_episode.start_window_idx - t
                         lead_sec = float(lead_windows * self.window_seconds)
 
@@ -439,8 +329,6 @@ class LeadTimeEngine:
                             or matched_episode.attack_category.lower() in pred_cat_name.lower()
                         )
                 else:
-                    # Alert did not correspond to any ground truth attack in range [t+1 ... t+K]
-                    # Check if actual network in windows [t+1 ... t+K] is benign
                     future_slice_end = min(t + K + 1, total_windows)
                     if np.sum(is_attack_arr[t + 1:future_slice_end]) == 0:
                         false_alarms += 1
@@ -454,25 +342,6 @@ class LeadTimeEngine:
         K: int = 5,
         partition_mode: str = "all"
     ) -> LeadTimeSummary:
-        """
-        Run lead time evaluation across all session parquet files.
-        
-        Parameters:
-        -----------
-        state_vectors_dir : str
-            Directory containing session parquet files.
-        history_len_m : int
-            Sequence input history length.
-        K : int
-            Forecast lookahead horizon.
-        partition_mode : str
-            "all" evaluates the full continuous session timeline.
-            "test" evaluates strictly on the held-out 15% test split of each session.
-            
-        Returns:
-        --------
-        LeadTimeSummary object.
-        """
         search_path = os.path.join(PROJECT_ROOT, state_vectors_dir, "*.parquet")
         session_files = sorted(glob.glob(search_path))
 
@@ -488,7 +357,6 @@ class LeadTimeEngine:
             df = pd.read_parquet(fpath)
 
             if partition_mode == "test":
-                # Extract held-out test split (15%)
                 _, _, test_df = split_session_chronologically(df, train_ratio=0.70, val_ratio=0.15, test_ratio=0.15)
                 eval_df = test_df.reset_index(drop=True)
             else:
@@ -504,7 +372,6 @@ class LeadTimeEngine:
             total_false_alarms += fa
             total_benign_windows += ben_win
 
-        # Compute summary statistics
         total_episodes = len(all_results)
         detected_episodes = [r for r in all_results if r.detected]
         early_warned = [r for r in detected_episodes if r.lead_time_seconds > 0]
@@ -522,7 +389,6 @@ class LeadTimeEngine:
 
         fa_rate = total_false_alarms / max(total_benign_windows, 1)
 
-        # Per-category metrics
         cat_map: Dict[str, List[EpisodeLeadTimeResult]] = {}
         for r in all_results:
             cat_map.setdefault(r.attack_category, []).append(r)

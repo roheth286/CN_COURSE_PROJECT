@@ -1,22 +1,6 @@
-"""
-NetForecaster - Stage 7 Early Warning Lead Time Execution Pipeline
-
-This script:
-1. Loads the trained NetworkWorldModel and NetworkStateScaler.
-2. Initializes the LeadTimeEngine.
-3. Evaluates advance warning lead time (Delta T) across:
-   - The held-out test partitions (unseen 15% chronological test splits).
-   - Full attack episodes across all 8 CIC-IDS2017 sessions.
-4. Identifies proactive early warnings (Delta T > 0), onset detections (Delta T == 0),
-   delayed detections (Delta T < 0), and missed episodes.
-5. Computes category-specific lead times and false alarm rates.
-6. Exports full episode tables and summary metrics to Datasets/forecasts/.
-"""
-
 import os
 import sys
 
-# Ensure UTF-8 output encoding for console
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -25,7 +9,6 @@ import argparse
 import pandas as pd
 import numpy as np
 
-# Ensure project root is in sys.path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
@@ -44,9 +27,6 @@ def run_stage7(
     K: int = 5,
     device: str = "cpu"
 ) -> None:
-    """
-    Execute Stage 7 Lead Time evaluation across all sessions.
-    """
     print("=" * 85)
     print("STAGE 7: ADVANCE WARNING LEAD TIME (DELTA T) EVALUATION")
     print("=" * 85)
@@ -57,7 +37,6 @@ def run_stage7(
     full_output_dir = os.path.join(PROJECT_ROOT, output_dir)
     os.makedirs(full_output_dir, exist_ok=True)
 
-    # 1. Initialize forecaster and engine
     print("\n[1/4] Initializing RecursiveForecaster and LeadTimeEngine...")
     forecaster = RecursiveForecaster(
         model=full_checkpoint_path,
@@ -77,7 +56,6 @@ def run_stage7(
     print(f"      Sequence History (m)      : {history_len_m} windows ({history_len_m * 30}s)")
     print(f"      Forecast Lookahead (K)    : {K} windows ({K * 30}s = {K * 0.5:.1f} mins)")
 
-    # 2. Evaluation Regime A: Full Attack Episodes Across All Sessions
     print("\n[2/4] Evaluating Lead Times across full continuous attack episodes...")
     summary_all: LeadTimeSummary = engine.evaluate_all(
         state_vectors_dir=state_vectors_dir,
@@ -86,7 +64,6 @@ def run_stage7(
         partition_mode="all"
     )
 
-    # 3. Evaluation Regime B: Held-Out 15% Test Partitions
     print("\n[3/4] Evaluating Lead Times strictly on held-out test partitions...")
     summary_test: LeadTimeSummary = engine.evaluate_all(
         state_vectors_dir=state_vectors_dir,
@@ -95,7 +72,6 @@ def run_stage7(
         partition_mode="test"
     )
 
-    # 4. Display Formatted Results
     print("\n" + "=" * 105)
     print(f"{'EPISODE':<4} | {'SESSION':<24} | {'CATEGORY':<14} | {'START':<19} | {'STATUS':<23} | {'LEAD TIME':<10}")
     print("-" * 105)
@@ -127,7 +103,6 @@ def run_stage7(
     print(f"False Alarm Rate                    : {summary_all.false_alarm_rate*100:.2f}%")
     print("-" * 80)
 
-    # Per-Category Table
     print("\nPER-CATEGORY ADVANCE WARNING BREAKDOWN:")
     print(f"{'CATEGORY':<16} | {'TOTAL':<6} | {'DETECTED':<9} | {'EARLY WARNED':<13} | {'MEAN LEAD TIME':<15} | {'MAX LEAD TIME':<14}")
     print("-" * 80)
@@ -135,7 +110,6 @@ def run_stage7(
         print(f"{cat_name:<16} | {cat_m['total_episodes']:<6} | {cat_m['detected']:<9} | {cat_m['early_warned']:<13} | {cat_m['mean_lead_time_seconds']:>5.1f} sec        | {cat_m['max_lead_time_seconds']:>5.1f} sec")
     print("=" * 80)
 
-    # Export artifacts
     summary_all_path = os.path.join(full_output_dir, "lead_time_all_summary.json")
     with open(summary_all_path, "w", encoding="utf-8") as f:
         json.dump(summary_all.to_dict(), f, indent=4)
@@ -146,7 +120,6 @@ def run_stage7(
         json.dump(summary_test.to_dict(), f, indent=4)
     print(f"[Saved] Test-partition lead time summary exported to: {os.path.join(output_dir, 'lead_time_test_summary.json')}")
 
-    # Export episode details to CSV
     episodes_df = pd.DataFrame(summary_all.episode_details)
     episodes_csv_path = os.path.join(full_output_dir, "lead_time_episodes.csv")
     episodes_df.to_csv(episodes_csv_path, index=False)

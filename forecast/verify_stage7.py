@@ -1,19 +1,6 @@
-"""
-Verification and Unit Test Suite for Stage 7: Early Warning Lead Time Engine
-
-This script tests:
-1. identify_attack_episodes accurately segments contiguous attack blocks and metadata.
-2. Proactive early warning calculation (Delta T > 0) when an alarm triggers ahead of attack onset.
-3. Onset detection calculation (Delta T == 0) when an alarm triggers at the start of attack.
-4. False alarm tracking on purely benign streaming telemetry.
-5. LeadTimeSummary aggregation and per-category breakdown calculation.
-6. End-to-end integration test with trained checkpoint on a real session parquet file.
-"""
-
 import os
 import sys
 
-# Ensure project root is in sys.path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
@@ -35,15 +22,10 @@ from forecast.lead_time import (
 
 
 def run_unit_tests() -> None:
-    """Run all automated unit tests for Stage 7."""
     print("=" * 65)
     print("Running Stage 7 Early Warning Lead Time Unit Tests...")
     print("=" * 65)
 
-    # -------------------------------------------------------------
-    # Test 1: identify_attack_episodes segmentation
-    # -------------------------------------------------------------
-    # Create 30 windows: 10 Benign, 5 DDoS, 5 Benign, 10 PortScan
     n_total = 30
     is_att = np.zeros(n_total, dtype=int)
     is_att[10:15] = 1
@@ -70,47 +52,36 @@ def run_unit_tests() -> None:
     })
 
     episodes = identify_attack_episodes(test_df, session_name="test_session")
-    assert len(episodes) == 2, f"Expected 2 attack episodes, got {len(episodes)}"
+    assert len(episodes) == 2
 
     ep1 = episodes[0]
-    assert ep1.attack_category == "DDoS", f"Expected DDoS, got {ep1.attack_category}"
-    assert ep1.start_window_idx == 10 and ep1.end_window_idx == 14, f"Ep1 range mismatch: {ep1.start_window_idx}-{ep1.end_window_idx}"
-    assert ep1.num_windows == 5, f"Expected 5 windows, got {ep1.num_windows}"
-    assert ep1.duration_seconds == 150.0, f"Expected 150.0s, got {ep1.duration_seconds}"
+    assert ep1.attack_category == "DDoS"
+    assert ep1.start_window_idx == 10 and ep1.end_window_idx == 14
+    assert ep1.num_windows == 5
+    assert ep1.duration_seconds == 150.0
 
     ep2 = episodes[1]
-    assert ep2.attack_category == "Port Scan", f"Expected Port Scan, got {ep2.attack_category}"
-    assert ep2.start_window_idx == 20 and ep2.end_window_idx == 29, f"Ep2 range mismatch: {ep2.start_window_idx}-{ep2.end_window_idx}"
-    assert ep2.num_windows == 10, f"Expected 10 windows, got {ep2.num_windows}"
+    assert ep2.attack_category == "Port Scan"
+    assert ep2.start_window_idx == 20 and ep2.end_window_idx == 29
+    assert ep2.num_windows == 10
 
     print(f"[PASS] Test 1: identify_attack_episodes successfully segmented 2 distinct episodes.")
 
-    # -------------------------------------------------------------
-    # Test 2: Proactive Early Warning Calculation (Delta T > 0)
-    # -------------------------------------------------------------
-    # Simulate a stream where an attack starts at index 15
-    # Dummy forecaster that predicts threat whenever t == 13 (2 steps = 60s ahead)
     class MockProactiveForecaster:
         def __init__(self):
             self.scaler = None
         def rollout(self, sequences, K=5, unscale=False, batch_size=64):
             N = len(sequences)
-            # Default benign predictions
             risks = np.zeros((N, K), dtype=np.float32)
             cats = np.zeros((N, K), dtype=int)
             cat_probs = np.zeros((N, K, 8), dtype=np.float32)
-            cat_probs[:, :, 0] = 1.0  # 100% Benign default
+            cat_probs[:, :, 0] = 1.0
 
-            # If surveillance step is t=13 (which is index 13 - 9 = 4 in monitoring_steps with m=10)
-            # In monitoring_steps, step 13 corresponds to index 13 - (m-1) = 13 - 9 = 4
-            # We trigger alarm at step 13 for k=2 (target = 13 + 2 = 15)
-            # Look at monitoring steps: for m=10, monitoring_steps start at 9
-            # So t=13 is at index 4 (9, 10, 11, 12, 13)
             idx_13 = 13 - 9
             if 0 <= idx_13 < N:
-                risks[idx_13, 1] = 0.95  # k=2 (step 2) threat prob = 0.95
+                risks[idx_13, 1] = 0.95
                 cat_probs[idx_13, 1, 0] = 0.05
-                cat_probs[idx_13, 1, 3] = 0.90 # DDoS
+                cat_probs[idx_13, 1, 3] = 0.90
                 cats[idx_13, 1] = 3
 
             from forecast.rollout import ForecastResult
@@ -137,18 +108,15 @@ def run_unit_tests() -> None:
     engine = LeadTimeEngine(forecaster=mock_forecaster, threat_threshold=0.50, window_seconds=30)
     results, fa, ben_w = engine.evaluate_stream(feat_df, session_name="mock_proactive", history_len_m=10, K=5)
 
-    assert len(results) == 1, "Expected 1 episode evaluated"
+    assert len(results) == 1
     res = results[0]
-    assert res.detected is True, "Episode should be detected"
-    assert res.lead_time_windows == 2, f"Expected 2 windows lead time, got {res.lead_time_windows}"
-    assert res.lead_time_seconds == 60.0, f"Expected 60.0s lead time, got {res.lead_time_seconds}"
-    assert res.detection_type == "Proactive Early Warning", f"Expected Proactive Early Warning, got {res.detection_type}"
-    assert res.alert_window_idx == 13, f"Expected alert at window 13, got {res.alert_window_idx}"
+    assert res.detected is True
+    assert res.lead_time_windows == 2
+    assert res.lead_time_seconds == 60.0
+    assert res.detection_type == "Proactive Early Warning"
+    assert res.alert_window_idx == 13
     print(f"[PASS] Test 2: Proactive Early Warning verified with Delta T = +60.0 seconds (2 windows).")
 
-    # -------------------------------------------------------------
-    # Test 3: Onset Detection Calculation (Delta T == 0)
-    # -------------------------------------------------------------
     class MockOnsetForecaster:
         def __init__(self):
             self.scaler = None
@@ -159,7 +127,6 @@ def run_unit_tests() -> None:
             cat_probs = np.zeros((N, K, 8), dtype=np.float32)
             cat_probs[:, :, 0] = 1.0
 
-            # Alert triggered exactly at onset t=15 (k=1, target=15+1=16 within episode 15-19)
             idx_15 = 15 - 9
             if 0 <= idx_15 < N:
                 risks[idx_15, 0] = 0.88
@@ -184,15 +151,12 @@ def run_unit_tests() -> None:
     results_onset, _, _ = engine_onset.evaluate_stream(feat_df, session_name="mock_onset", history_len_m=10, K=5)
 
     res_onset = results_onset[0]
-    assert res_onset.detected is True, "Onset episode should be detected"
-    assert res_onset.lead_time_windows == 0, f"Expected 0 windows lead time, got {res_onset.lead_time_windows}"
-    assert res_onset.lead_time_seconds == 0.0, f"Expected 0.0s lead time, got {res_onset.lead_time_seconds}"
-    assert res_onset.detection_type == "Onset Detection", f"Expected Onset Detection, got {res_onset.detection_type}"
+    assert res_onset.detected is True
+    assert res_onset.lead_time_windows == 0
+    assert res_onset.lead_time_seconds == 0.0
+    assert res_onset.detection_type == "Onset Detection"
     print(f"[PASS] Test 3: Onset Detection verified with Delta T = 0.0 seconds.")
 
-    # -------------------------------------------------------------
-    # Test 4: False Alarm Counting on Benign Telemetry
-    # -------------------------------------------------------------
     class MockFalseAlarmForecaster:
         def __init__(self):
             self.scaler = None
@@ -203,7 +167,6 @@ def run_unit_tests() -> None:
             cat_probs = np.zeros((N, K, 8), dtype=np.float32)
             cat_probs[:, :, 0] = 1.0
 
-            # Spurious false alarm at window index 11
             idx_11 = 11 - 9
             if 0 <= idx_11 < N:
                 risks[idx_11, 0] = 0.99
@@ -232,14 +195,11 @@ def run_unit_tests() -> None:
     engine_fa = LeadTimeEngine(forecaster=mock_fa, threat_threshold=0.50, window_seconds=30)
     res_fa, fa_count, ben_cnt = engine_fa.evaluate_stream(benign_df, session_name="benign_stream", history_len_m=10, K=5)
 
-    assert len(res_fa) == 0, "No episodes should exist in benign stream"
-    assert fa_count == 1, f"Expected 1 false alarm, got {fa_count}"
-    assert ben_cnt == 15, f"Expected 15 benign surveillance windows, got {ben_cnt}"
+    assert len(res_fa) == 0
+    assert fa_count == 1
+    assert ben_cnt == 15
     print(f"[PASS] Test 4: False alarm tracking verified (1 false alarm recorded).")
 
-    # -------------------------------------------------------------
-    # Test 5: Summary Metrics Compilation
-    # -------------------------------------------------------------
     sample_res1 = EpisodeLeadTimeResult(
         episode_id=1, session_name="s1", attack_category="DDoS",
         start_window_idx=10, end_window_idx=15, start_timestamp=None,
@@ -268,13 +228,10 @@ def run_unit_tests() -> None:
         episode_details=[]
     )
     s_dict = summary.to_dict()
-    assert s_dict["early_warning_rate"] == 0.50, "Summary serialization mismatch"
-    assert s_dict["max_lead_time_seconds"] == 60.0, "Max lead time mismatch"
+    assert s_dict["early_warning_rate"] == 0.50
+    assert s_dict["max_lead_time_seconds"] == 60.0
     print(f"[PASS] Test 5: LeadTimeSummary statistics and serialization verified.")
 
-    # -------------------------------------------------------------
-    # Test 6: Real Checkpoint & Session Parquet Integration Test
-    # -------------------------------------------------------------
     checkpoint_path = os.path.join(PROJECT_ROOT, "model", "checkpoints", "best_world_model.pt")
     scaler_path = os.path.join(PROJECT_ROOT, "Datasets", "sequences", "scaler.pkl")
     session_path = os.path.join(
@@ -303,7 +260,7 @@ def run_unit_tests() -> None:
             K=5
         )
 
-        assert len(real_results) > 0, "Expected at least 1 attack episode in PortScan session"
+        assert len(real_results) > 0
         ep0 = real_results[0]
         print(f"[PASS] Test 6: Real session integration test verified on Friday-PortScan.")
         print(f"       Attack Episode: {ep0.attack_category} (Windows {ep0.start_window_idx} to {ep0.end_window_idx})")
